@@ -578,7 +578,11 @@ def peri_event_time_histogram(
     else:
         bars = np.zeros_like(mean)
     if error_bars != 'none':
-        ax.fill_between(peths.tscale, mean - bars, mean + bars, **errbar_kwargs)
+        negative_bar=mean-bars
+        if np.any(negative_bar<0):
+            ax.fill_between(peths.tscale, 0, mean + bars, **errbar_kwargs)
+        else:
+            ax.fill_between(peths.tscale, negative_bar, mean + bars, **errbar_kwargs)
 
     # Plot the event marker line. Extends to 5% higher than max value of means plus any error bar.
     plot_edge = (mean.max() + bars[mean.argmax()]) * 1.05
@@ -588,6 +592,13 @@ def peri_event_time_histogram(
     # blank space below the zero where the raster will go.
     ax.set_xlim([-t_before, t_after])
     ax.set_ylim([-plot_edge if include_raster else 0., plot_edge])
+    if int(plot_edge)==0:
+        include_raster=False
+
+    if mean.min()!=0:
+        ax.set_yticks(0,mean.min(),mean.max())
+    else:
+        ax.set_yticks([0,mean.max()])
     # Put y ticks only at min, max, and zero
     if mean.min() != 0:
         ax.set_yticks([0, mean.min(), mean.max()])
