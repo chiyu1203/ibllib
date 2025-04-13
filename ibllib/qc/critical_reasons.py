@@ -1,20 +1,21 @@
 """
-Prompt experimenter for reason for marking session/insertion as CRITICAL
+Methods for adding QC sign-off notes to Alyx.
+
+Includes a GUI to prompt experimenter for reason for marking session/insertion as CRITICAL.
 Choices are listed in the global variables. Multiple reasons can be selected.
-Places info in Alyx session note in a format that is machine retrievable (text->json)
+Places info in Alyx session note in a format that is machine retrievable (text->json).
 """
 import abc
 import logging
 import json
-import warnings
 from datetime import datetime
-from one.api import OneAlyx
 from one.webclient import AlyxClient
+from one.alf.spec import is_uuid
 
 _logger = logging.getLogger('ibllib')
 
 
-def main_gui(uuid, reasons_selected, one=None, alyx=None):
+def main_gui(uuid, reasons_selected, alyx=None):
     """
     Main function to call to input a reason for marking an insertion as CRITICAL from the alignment GUI.
 
@@ -26,16 +27,11 @@ def main_gui(uuid, reasons_selected, one=None, alyx=None):
         An insertion ID.
     reasons_selected : list of str
         A subset of REASONS_INS_CRIT_GUI.
-    one : one.api.OneAlyx
-        (DEPRECATED) An instance of ONE. NB: Pass in an instance of AlyxClient instead.
     alyx : one.webclient.AlyxClient
         An AlyxClient instance.
     """
     # hit the database to check if uuid is insertion uuid
-    if alyx is None and one is not None:
-        # Deprecate ONE in future because instantiating it takes longer and is unnecessary
-        warnings.warn('In future please pass in an AlyxClient instance (i.e. `one.alyx`)', FutureWarning)
-        alyx = one if isinstance(one, AlyxClient) else one.alyx
+    alyx = alyx or AlyxClient()
     ins_list = alyx.rest('insertions', 'list', id=uuid, no_cache=True)
     if len(ins_list) != 1:
         raise ValueError(f'N={len(ins_list)} insertion found, expected N=1. Check uuid provided.')
@@ -51,7 +47,7 @@ def main_gui(uuid, reasons_selected, one=None, alyx=None):
     note._upload_note(overwrite=True)
 
 
-def main(uuid, one=None, alyx=None):
+def main(uuid, alyx=None):
     """
     Main function to call to input a reason for marking a session/insertion as CRITICAL programmatically.
 
@@ -65,8 +61,6 @@ def main(uuid, one=None, alyx=None):
     ----------
     uuid : uuid.UUID, str
         An experiment UUID or an insertion UUID.
-    one : one.api.OneAlyx
-        (DEPRECATED) An instance of ONE. NB: Pass in an instance of AlyxClient instead.
     alyx : one.webclient.AlyxClient
         An AlyxClient instance.
 
@@ -86,17 +80,12 @@ def main(uuid, one=None, alyx=None):
     >>> test_json_read = json.loads(notes[0]['text'])
 
     """
-    if alyx is None and one is not None:
-        # Deprecate ONE in future because instantiating it takes longer and is unnecessary
-        warnings.warn('In future please pass in an AlyxClient instance (i.e. `one.alyx`)', FutureWarning)
-        alyx = one if isinstance(one, AlyxClient) else one.alyx
-    if not alyx:
-        alyx = AlyxClient()
+    alyx = alyx or AlyxClient()
     # ask reasons for selection of critical status
 
     # hit the database to know if uuid is insertion or session uuid
-    sess_list = alyx.get('/sessions?&django=pk,' + uuid, clobber=True)
-    ins_list = alyx.get('/insertions?&django=pk,' + uuid, clobber=True)
+    sess_list = alyx.get('/sessions?&django=pk,' + str(uuid), clobber=True)
+    ins_list = alyx.get('/insertions?&django=pk,' + str(uuid), clobber=True)
 
     if len(sess_list) > 0 and len(ins_list) == 0:  # session
         note = CriticalSessionNote(uuid, alyx)
@@ -143,11 +132,9 @@ class Note(abc.ABC):
         content_type : str
             The Alyx model name of the UUID.
         """
+        if not is_uuid(uuid, versions=(4,)):
+            raise ValueError('Expected `uuid` to be a UUIDv4 object')
         self.uuid = uuid
-        if isinstance(alyx, OneAlyx):
-            # Deprecate ONE in future because instantiating it takes longer and is unnecessary
-            warnings.warn('In future please pass in an AlyxClient instance (i.e. `one.alyx`)', FutureWarning)
-            alyx = alyx.alyx
         self.alyx = alyx
         self.selected_reasons = []
         self.other_reason = []
@@ -253,7 +240,8 @@ class Note(abc.ABC):
             self._delete_note(note['id'])
 
     def _check_existing_note(self):
-        notes = self.alyx.rest('notes', 'list', django=f'text__icontains,{self.note_title},object_id,{self.uuid}', no_cache=True)
+        query = f'text__icontains,{self.note_title},object_id,{str(self.uuid)}'
+        notes = self.alyx.rest('notes', 'list', django=query, no_cache=True)
         if len(notes) == 0:
             return False, None
         else:
